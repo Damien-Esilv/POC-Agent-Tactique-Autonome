@@ -2,5 +2,3 @@ __pycache__/
 *.pyc
 .pytest_cache/
 *.tgz
-.venv-tactical-brain/
-.DS_Store

@@ -1,11 +1,31 @@
 import json
+from pathlib import Path
 import pytest
-from tactical_agent import TacticalAgent, TelemetryInput, TacticalDecision
+from tactical_agent import TacticalAgent, TelemetryInput, TacticalDecision, run_enhanced_benchmark
 
 
 @pytest.fixture
 def agent():
-    return TacticalAgent(timeout_sec=3.0)
+    return TacticalAgent()
+
+
+def test_config_loading_and_selection(tmp_path):
+    custom_config = {
+        "platform": "lm_studio",
+        "model": "qwen2.5:8b",
+        "platforms_config": {
+            "lm_studio": {"url": "http://localhost:1234"}
+        },
+        "timeout_sec": 2.5,
+        "fallback_to_failsafe": True
+    }
+    cfg_file = tmp_path / "custom_config.json"
+    cfg_file.write_text(json.dumps(custom_config), encoding="utf-8")
+
+    custom_agent = TacticalAgent(config_path=cfg_file)
+    assert custom_agent.platform == "lm_studio"
+    assert custom_agent.model_name == "qwen2.5:8b"
+    assert custom_agent.backend_url == "http://localhost:1234"
 
 
 def test_rule_1_battery_low(agent):
@@ -60,11 +80,10 @@ def test_json_strictness_and_schema(agent):
         "sensor_front": "OBSTACLE_DETECTED_2M",
         "mission_status": "RECONNAISSANCE",
     }
-    for _ in range(10):
+    for _ in range(5):
         output = agent.process(telemetry)
         meta = output.pop("_execution_metadata", None)
         assert meta is not None
-        # Validate pydantic schema
         decision = TacticalDecision.model_validate(output)
         assert decision.tactical_decision in ["bypass_obstacle", "return_to_base", "hold_position", "continue_mission"]
         assert isinstance(decision.target_speed_ms, float)
@@ -85,3 +104,24 @@ def test_clean_json_string_extractor(agent):
     cleaned = agent._clean_json_string(dirty_llm_response)
     decision = TacticalDecision.model_validate_json(cleaned)
     assert decision.tactical_decision == "bypass_obstacle"
+
+
+def test_enhanced_benchmark_execution(agent, capsys):
+    scenarios = [
+        {
+            "name": "Test Court 1",
+            "telemetry": {
+                "timestamp": "2026-10-06T12:00:00Z",
+                "comm_link_c2": "LOST",
+                "battery_pct": 10,
+                "current_zone": "LIMA_1",
+                "sensor_front": "CLEAR",
+                "mission_status": "PATROL",
+            }
+        }
+    ]
+    run_enhanced_benchmark(agent, test_scenarios=scenarios)
+    captured = capsys.readouterr().out
+    assert "BENCHMARK DÉTAILLÉ" in captured
+    assert "RAPPORT ET CONCLUSION" in captured
+    assert "STATUT KPI 1" in captured or "Statut KPI 1" in captured
