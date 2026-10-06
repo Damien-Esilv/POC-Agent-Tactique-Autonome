@@ -1,6 +1,6 @@
 {
   "platform": "ollama",
-  "model": "mistral:latest",
+  "model": "qwen3:4b",
   "platforms_config": {
     "ollama": {
       "url": "http://localhost:11434",
@@ -15,6 +15,11 @@
       "chat_endpoint": "/v1/chat/completions"
     }
   },
-  "timeout_sec": 3.0,
+  "timeout_sec": 60.0,
+  "think": false,
+  "ollama_options": {
+    "temperature": 0.0,
+    "num_predict": 160
+  },
   "fallback_to_failsafe": true
 }

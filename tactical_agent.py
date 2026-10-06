@@ -12,7 +12,7 @@ import time
 import re
 import argparse
 from pathlib import Path
-from typing import Optional, Dict, Any, Tuple, List
+from typing import Literal, Optional, Dict, Any, Tuple, List
 from pydantic import BaseModel, Field, ValidationError
 
 SYSTEM_PROMPT = (
@@ -37,7 +37,12 @@ class TelemetryInput(BaseModel):
 
 
 class TacticalDecision(BaseModel):
-    tactical_decision: str = Field(description="Action command (e.g., bypass_obstacle, return_to_base, hold_position)")
+    tactical_decision: Literal[
+        "bypass_obstacle",
+        "return_to_base",
+        "hold_position",
+        "continue_mission",
+    ] = Field(description="Supported tactical action command")
     justification: str = Field(description="Tactical rationale for the decision")
     target_speed_ms: float = Field(ge=0.0, le=5.0, description="Target speed in meters per second")
 
@@ -60,8 +65,13 @@ class TacticalAgent:
         self.config = self._load_config(config_path or DEFAULT_CONFIG_PATH)
 
         self.platform = platform or self.config.get("platform", "ollama")
-        self.model_name = model_name or self.config.get("model", "mistral:latest")
-        self.timeout_sec = timeout_sec or self.config.get("timeout_sec", 3.0)
+        self.model_name = model_name or self.config.get("model", "qwen3:8b")
+        self.timeout_sec = timeout_sec or self.config.get("timeout_sec", 60.0)
+        self.think = self.config.get("think", False)
+        self.ollama_options = self.config.get(
+            "ollama_options",
+            {"temperature": 0.0, "num_predict": 160},
+        )
         self.fallback_enabled = self.config.get("fallback_to_failsafe", True)
 
         platforms_cfg = self.config.get("platforms_config", {})
@@ -82,13 +92,15 @@ class TacticalAgent:
                 print(f"[WARN] Impossible de lire {path}: {e}. Utilisation de la configuration par défaut.", file=sys.stderr)
         return {
             "platform": "ollama",
-            "model": "mistral:latest",
+            "model": "qwen3:8b",
             "platforms_config": {
                 "ollama": {"url": "http://localhost:11434"},
                 "lm_studio": {"url": "http://localhost:1234"},
                 "llama_cpp": {"url": "http://localhost:8080"}
             },
-            "timeout_sec": 3.0,
+            "timeout_sec": 60.0,
+            "think": False,
+            "ollama_options": {"temperature": 0.0, "num_predict": 160},
             "fallback_to_failsafe": True
         }
 
@@ -169,13 +181,24 @@ class TacticalAgent:
                 "model": self.model_name,
                 "messages": [
                     {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": user_content},
+                    {
+                        "role": "user",
+                        "content": (
+                            "Retourne exactement les champs tactical_decision, "
+                            f"justification et target_speed_ms.\n{user_content}"
+                        ),
+                    },
                 ],
                 "stream": False,
-                "format": "json",
+                "format": TacticalDecision.model_json_schema(),
+                "think": self.think,
+                "options": self.ollama_options,
             }
             try:
                 resp = requests.post(chat_url, json=payload, timeout=self.timeout_sec)
+                if resp.status_code == 400 and "think" in payload:
+                    payload.pop("think")
+                    resp = requests.post(chat_url, json=payload, timeout=self.timeout_sec)
                 elapsed = time.perf_counter() - start_time
                 if resp.status_code == 200:
                     raw_content = resp.json().get("message", {}).get("content", "")
