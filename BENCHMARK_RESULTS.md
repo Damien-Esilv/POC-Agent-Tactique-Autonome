@@ -1,49 +1,70 @@
-# Benchmark & Rapport d'Analyse de Performance Matérielle (CoHoMa 4)
+# Benchmark vérifié des modèles locaux
 
-Ce document présente l'analyse comparative des performances d'inférence locale pour le **Cerveau Tactique de Secours (Failsafe Cognitive Engine)** selon les 3 KPIs exigeants du challenge CoHoMa 4.
+Ce rapport contient uniquement les mesures réalisées dans ce projet sur le
+MacBook Pro Apple M3 Pro avec 18 Go de mémoire, Ollama et
+[`tactical_agent.py`](./tactical_agent.py).
 
----
+## Trois KPI mesurés
 
-## 1. Synthèse de Validation des 3 KPIs
+1. **Structure** : la réponse respecte le schéma JSON `TacticalDecision`.
+2. **Latence** : temps total de `agent.process(...)`, seuil demandé `< 3 s`.
+3. **Véracité** : `tactical_decision` est identique à la décision attendue du
+   moteur déterministe pour la même télémétrie et les trois règles :
+   batterie critique, obstacle et ligne LIMA.
 
-| Critère de Succès (KPI) | Objectif & Seuil | Méthode de Mesure | Résultat Obtenu | Statut |
-| :--- | :--- | :--- | :--- | :---: |
-| **KPI 1 : Formatage JSON Strict** | 100 % valide (sans blabla) sur 10 essais | Parsing Pydantic `TacticalDecision` | **10/10 (100 % JSON valide)** | ✅ **VALIDÉ** |
-| **KPI 2 : Temps de Latence Inférence** | Temps de réponse < 3.0 secondes | Horodatage `time.perf_counter()` | **0.0137 s** (Failsafe) / **1.12 s** (Mistral 7B) | ✅ **VALIDÉ** |
-| **KPI 3 : Respect des Règles de Survie** | Conformité décisionnelle par scénario | Comparaison Décision Obtenue vs Attendue | **10/10 (100 % Conforme)** | ✅ **VALIDÉ** |
+Chaque benchmark contient 10 essais : les quatre scénarios sont exécutés puis
+répétés pour obtenir 10 décisions. Le champ `obtenue` est la décision du
+modèle ou du failsafe ; le champ `attendue` est la référence calculée par
+`evaluate_rules`.
 
----
+## Résultats des 10 essais par modèle
 
-## 2. Recommandation des Modèles LLM & Analyse de Latence
+| Modèle Ollama | Taille | Structure JSON | Latence moyenne | Latence min-max | Véracité | KPI latence |
+|---|---:|---:|---:|---:|---:|---|
+| `mistral:latest` | 4,4 Go | 10/10 (100 %) | 7,9895 s | 2,3341–11,3520 s | 10/10 (100 %) | ÉCHEC |
+| `qwen3:14b` | 9,3 Go | 10/10 (100 %) | 8,0812 s | 5,6309–15,0222 s | 5/10 (50 %) | ÉCHEC |
+| `qwen3:8b` | 5,2 Go | 10/10 (100 %) | 5,1193 s | 3,0032–10,9902 s | 5/10 (50 %) | ÉCHEC |
+| `qwen3:4b` | 2,5 Go | 10/10 (100 %) | 1,8084 s | 1,6413–2,2653 s | 2/10 (20 %) | SUCCÈS |
+| `qwen3:1.7b` | 1,4 Go | 10/10 (100 %) | 7,1751 s | 4,1349–10,4758 s | 10/10 (100 %) | ÉCHEC |
 
-Dans un contexte embarqué militaire (Edge Computing sur robots terrestres type Tank ou Travelers), le modèle LLM doit respecter deux contraintes critiques :
-1. **Latence d'inférence < 3.0 secondes** pour permettre la réactivité de navigation ROS2.
-2. **Respect absolu des consignes de sécurité (KPI 3)** sans hallucination ni réponse paresseuse.
+Les mesures ci-dessus sont les sorties réelles des benchmarks relancés après
+l'ajout du KPI de véracité. La latence du modèle `qwen3:4b` est sous 3 secondes
+sur ces 10 essais, mais sa véracité n'est que de 20 %. `mistral:latest` est le
+seul modèle testé avec 100 % de véracité et il dépasse le budget de latence.
 
-### Comparatif des Modèles Évalués
+## Décisions observées
 
-| Modèle LLM | Taille / Quantification | Poids RAM | Latence (Apple M3 Pro) | Latence (ThinkCentre Edge) | KPI 3 (Règles Survie) |
-| :--- | :--- | :--- | :--- | :--- | :---: |
-| **Qwen3 14B (Qwen 2.5 14B)** | Q4_K_M (~9.3 Go) | ~11.5 Go | **4.2 s à 6.8 s** | **> 12.0 s** | ❌ **Trop Lourd (> 3.0s)** |
-| **Mistral 7B Instruct v0.3** | Q4_K_M (~4.1 Go) | ~5.2 Go | **0.8 s à 1.4 s** | **2.1 s à 2.7 s** | ✅ **RECOMMANDÉ (100%)** |
-| **Qwen 2.5 7B / Llama 3.2 3B**| Q4_K_M (~2.2 Go - 4.5 Go)| ~3.5 Go - 5.5 Go | **0.5 s à 1.1 s** | **1.4 s à 2.2 s** | ✅ **EXCELLENT (100%)** |
-| **Moteur Déterministe Failsafe** | Moteur de Règles Python | < 10 Mo | **< 0.005 s** | **< 0.005 s** | ✅ **ULTRA FAST (100%)** |
+Les quatre scénarios de référence attendent, dans cet ordre :
 
----
+```text
+bypass_obstacle
+return_to_base
+hold_position
+continue_mission
+```
 
-## 3. Comparatif des Configurations Matérielles
+Sur les 10 essais :
 
-| Appareil / Configuration | Processeur & GPU | Mémoire RAM | Plateforme LLM | Temps Moyen de Réponse (Mistral 7B / Failsafe) |
-| :--- | :--- | :--- | :--- | :--- |
-| **Apple MacBook Pro (Machine de Test)** | Apple M3 Pro (12-core CPU, 18-core GPU) | 18 Go RAM Unifiée | Ollama / LM Studio | **0.85 s** (LLM) / **0.004 s** (Failsafe) |
-| **Lenovo ThinkCentre Embarqué (Cible)** | Intel Core i7-13700 / i5 (Edge CPU) | 16 Go DDR5 | llama.cpp / Ollama | **2.20 s** (LLM) / **0.005 s** (Failsafe) |
-| **Sandbox de Simulation (CI/CD)** | Intel Xeon 4-Cores @ 2.30GHz | 8 Go DDR4 | Failsafe Engine (Offline) | **0.020 s** (Failsafe) |
+- `mistral:latest` a produit cette séquence attendue sur les 10 essais ;
+- `qwen3:1.7b` a produit cette séquence attendue sur les 10 essais, mais avec
+  une latence supérieure à 3 secondes ;
+- `qwen3:8b` et `qwen3:14b` ont généralement produit
+  `continue_mission` pour les scénarios obstacle et LIMA ;
+- `qwen3:4b` a produit `continue_mission` pour les scénarios obstacle,
+  batterie critique et LIMA, et n'a été correct que sur le scénario voie libre.
 
----
+Le rapport terminal affiche pour chaque essai la télémétrie, la décision
+`obtenue`, la décision `attendue`, la validité JSON, la véracité et la latence.
 
-## 4. Portabilité Multi-Plateforme (Windows, macOS, Linux)
+## Conclusion
 
-Le code Python `tactical_agent.py` est conçu avec les bibliothèques standard (`pathlib`, `os`, `sys`) et `pydantic`/`requests`, garantissant son fonctionnement natif sans modification de code sur :
-- **macOS** (Apple Silicon M1/M2/M3 ou Intel)
-- **Linux** (Ubuntu 22.04 LTS / Debian embarqué sur robots ROS2)
-- **Windows 11 / 10** (pour démonstrations et tests sur PC)
+Aucun des modèles testés ne satisfait simultanément les trois KPI dans cette
+configuration :
+
+- `qwen3:4b` satisfait la latence, mais pas la véracité ;
+- `mistral:latest` et `qwen3:1.7b` satisfont la véracité, mais pas la latence ;
+- `qwen3:8b` et `qwen3:14b` ne satisfont ni la latence ni la véracité complète.
+
+Le moteur déterministe reste donc nécessaire comme garde-fou de sécurité. Les
+résultats ne sont pas extrapolables à un autre ordinateur, système ou
+configuration Ollama.
