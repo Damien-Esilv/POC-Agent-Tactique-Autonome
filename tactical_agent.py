@@ -10,7 +10,7 @@ import json
 import time
 import re
 import argparse
-from typing import Optional, Dict, Any, Tuple
+from typing import Literal, Optional, Dict, Any, Tuple
 from pydantic import BaseModel, Field, ValidationError
 
 SYSTEM_PROMPT = (
@@ -33,7 +33,12 @@ class TelemetryInput(BaseModel):
 
 
 class TacticalDecision(BaseModel):
-    tactical_decision: str = Field(description="Action command (e.g., bypass_obstacle, return_to_base, hold_position)")
+    tactical_decision: Literal[
+        "bypass_obstacle",
+        "return_to_base",
+        "hold_position",
+        "continue_mission",
+    ] = Field(description="One of the four supported tactical action commands")
     justification: str = Field(description="Tactical rationale for the decision")
     target_speed_ms: float = Field(ge=0.0, le=5.0, description="Target speed in meters per second")
 
@@ -47,8 +52,8 @@ class TacticalAgent:
     def __init__(
         self,
         backend_url: Optional[str] = None,
-        model_name: str = "mistral:latest",
-        timeout_sec: float = 3.0,
+        model_name: str = "qwen3:14b",
+        timeout_sec: float = 60.0,
     ):
         self.backend_url = backend_url or os.getenv("LLM_BACKEND_URL", "http://localhost:11434")
         self.model_name = model_name
@@ -131,10 +136,18 @@ class TacticalAgent:
                 "model": self.model_name,
                 "messages": [
                     {"role": "system", "content": SYSTEM_PROMPT},
-                    {"role": "user", "content": user_content},
+                    {
+                        "role": "user",
+                        "content": (
+                            f"Retourne exactement les champs tactical_decision, justification "
+                            f"et target_speed_ms. Télémétrie :\n{user_content}"
+                        ),
+                    },
                 ],
                 "stream": False,
-                "format": "json",
+                "format": TacticalDecision.model_json_schema(),
+                "think": False,
+                "options": {"temperature": 0.0, "num_predict": 160},
             }
             try:
                 resp = requests.post(chat_url, json=payload, timeout=self.timeout_sec)
@@ -251,12 +264,17 @@ def main():
     parser.add_argument("--c2-link", type=str, default="LOST", help="C2 Link status")
     parser.add_argument("--benchmark", action="store_true", help="Run 10 consecutive trials benchmark")
     parser.add_argument("--backend-url", type=str, default="http://localhost:11434", help="Local LLM Backend URL")
-    parser.add_argument("--model", type=str, default="mistral:latest", help="Local LLM Model name")
+    parser.add_argument("--model", type=str, default="qwen3:14b", help="Local LLM Model name")
+    parser.add_argument("--timeout", type=float, default=60.0, help="LLM request timeout in seconds")
     parser.add_argument("--force-failsafe", action="store_true", help="Force local deterministic rule engine")
 
     args = parser.parse_args()
 
-    agent = TacticalAgent(backend_url=args.backend_url, model_name=args.model)
+    agent = TacticalAgent(
+        backend_url=args.backend_url,
+        model_name=args.model,
+        timeout_sec=args.timeout,
+    )
 
     if args.telemetry_file and os.path.exists(args.telemetry_file):
         with open(args.telemetry_file, "r", encoding="utf-8") as f:

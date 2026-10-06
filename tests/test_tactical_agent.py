@@ -5,7 +5,7 @@ from tactical_agent import TacticalAgent, TelemetryInput, TacticalDecision
 
 @pytest.fixture
 def agent():
-    return TacticalAgent()
+    return TacticalAgent(timeout_sec=3.0)
 
 
 def test_rule_1_battery_low(agent):

@@ -33,9 +33,18 @@ Il démontre qu'un modèle de langage (LLM) exécuté 100 % en local sur le mat�
   └─────────────────────────────────────────────────────────────────────────────────┘
 ```
 
+
 ### Modèles Ciblés
 - **Mistral Nemo 12B Instruct (Quantifié Q4_K_M)** : Modèle cible idéal pour le mini PC embarqué Lenovo ThinkCentre.
 - **Mistral 7B Instruct v0.3 / Instruct-v0.2 (Q4_0 / Q4_K_M)** : Modèle alternatif ultra-léger garantissant des temps de réponse sous les 1.5s.
+
+### Modèle recommandé pour le développement local
+- **Qwen3 14B via Ollama** : choix recommandé pour un MacBook Pro M3 Pro avec 18 Go de mémoire.
+  Il offre un meilleur compromis entre raisonnement, sortie JSON structurée et consommation mémoire qu'un
+  modèle 30B/35B sur cette configuration. Le moteur de secours reste toujours disponible si Ollama
+  ou le modèle sont indisponibles.
+- Pour une machine avec moins de mémoire, utilisez `qwen3:8b`. Pour une machine plus puissante,
+  vous pourrez tester un modèle plus grand sans modifier le moteur de règles.
 
 ---
 
@@ -57,17 +66,26 @@ Il démontre qu'un modèle de langage (LLM) exécuté 100 % en local sur le mat�
 
 ### Installation des dépendances
 
+Un environnement virtuel nommé `.venv-tactical-brain` est utilisé par ce projet et est ignoré par Git :
+
 ```bash
-pip install -r requirements.txt
+python3 -m venv .venv-tactical-brain
+source .venv-tactical-brain/bin/activate       # macOS / Linux
+# .venv-tactical-brain\Scripts\activate        # Windows PowerShell
+python -m pip install -r requirements.txt
 ```
 
 ### Option A : Lancement avec Ollama / LM Studio local
 
-Si Ollama est installé avec le modèle Mistral :
+Installez [Ollama](https://ollama.com/) pour votre système, puis téléchargez le modèle recommandé :
+
 ```bash
-ollama run mistral
-python3 tactical_agent.py --backend-url http://localhost:11434 --model mistral
+ollama pull qwen3:14b
+python tactical_agent.py --backend-url http://localhost:11434 --model qwen3:14b
 ```
+
+Ollama fournit la même API HTTP sur macOS, Windows et Linux. Le modèle est téléchargé une seule fois
+et peut ensuite être utilisé hors ligne.
 
 ### Option B : Mode Autonome / Hors Connexion Réseau Complète (Failsafe Engine)
 
@@ -75,16 +93,16 @@ Vous pouvez tester le script sur n'importe quel ordinateur, même avec le résea
 
 ```bash
 # 1. Test du scénario standard (Obstacle détecté -> Contournement)
-python3 tactical_agent.py
+python tactical_agent.py --force-failsafe
 
 # 2. Test Règle 1 (Batterie sous 20% -> Retour à la base)
-python3 tactical_agent.py --battery 15
+python tactical_agent.py --battery 15 --force-failsafe
 
 # 3. Test Règle 3 (Ligne LIMA active -> Maintien de position)
-python3 tactical_agent.py --battery 50 --sensor CLEAR --zone LIMA_2
+python tactical_agent.py --battery 50 --sensor CLEAR --zone LIMA_2 --force-failsafe
 
 # 4. Lancement du Benchmark de 10 essais consécutifs
-python3 tactical_agent.py --benchmark
+python tactical_agent.py --benchmark --force-failsafe
 ```
 
 ---
