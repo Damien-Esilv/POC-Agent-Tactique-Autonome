@@ -97,7 +97,7 @@ class TacticalAgent:
         return {
             "platform": "ollama",
             "model": "mistral:latest",
-            "models": ["mistral:latest", "failsafe_engine"],
+            "models": ["mistral:latest", "qwen3:14b", "qwen3:8b", "qwen3:4b", "qwen3:1.7b", "failsafe_engine"],
             "platforms_config": {
                 "ollama": {"url": "http://localhost:11434"},
                 "lm_studio": {"url": "http://localhost:1234"},
@@ -192,9 +192,11 @@ class TacticalAgent:
             return "7,1 Go"
         elif "8b" in m_lower or "7b" in m_lower or "mistral" in m_lower:
             return "4,4 Go"
+        elif "4b" in m_lower:
+            return "2,8 Go"
         elif "3b" in m_lower or "3.2" in m_lower:
             return "2,0 Go"
-        elif "1b" in m_lower:
+        elif "1.7b" in m_lower or "1b" in m_lower:
             return "1,1 Go"
         return "Inconnue"
 
@@ -299,18 +301,21 @@ class TacticalAgent:
 
 def get_all_test_scenarios() -> List[Dict[str, Any]]:
     """
-    Generates test scenarios covering ALL possible configuration combinations:
-    1. Rule 1 Priority: Battery < 20% WITH obstacle & IN LIMA zone
-    2. Rule 1 Priority: Battery < 20% WITHOUT obstacle & OUT of LIMA zone
-    3. Rule 2 Priority: Battery >= 20% WITH obstacle & IN LIMA zone
-    4. Rule 2 Priority: Battery >= 20% WITH obstacle & OUT of LIMA zone
-    5. Rule 3 Priority: Battery >= 20% WITHOUT obstacle & IN LIMA zone
-    6. Nominal Operation: Battery >= 20% WITHOUT obstacle & OUT of LIMA zone
-    + Repeats to complete a 10-trial benchmark suite.
+    Generates 10 distinct, heteroclite telemetry test scenarios covering all possible edge configurations:
+    1. Test 01 : Batterie critique (12%) + Obstacle + Zone LIMA_1 -> Règle 1 prioritaire (return_to_base)
+    2. Test 02 : Batterie critique (15%) + Voie libre + Hors Zone LIMA (ALPHA_1) -> Règle 1 prioritaire (return_to_base)
+    3. Test 03 : Batterie très basse (5%) + Voie libre + Zone LIMA_2 -> Règle 1 prioritaire (return_to_base)
+    4. Test 04 : Batterie normale (35%) + Obstacle à 2m + Zone LIMA_1 -> Règle 2 prioritaire (bypass_obstacle)
+    5. Test 05 : Batterie forte (80%) + Obstacle à 1m + Zone BRAVO_3 (Hors LIMA) -> Règle 2 prioritaire (bypass_obstacle)
+    6. Test 06 : Batterie normale (40%) + Obstacle massif à 50cm + Zone LIMA_3 -> Règle 2 prioritaire (bypass_obstacle)
+    7. Test 07 : Batterie normale (60%) + Voie libre + Zone LIMA_1 -> Règle 3 prioritaire (hold_position)
+    8. Test 08 : Batterie forte (90%) + Voie libre + Zone LIMA_2 -> Règle 3 prioritaire (hold_position)
+    9. Test 09 : Batterie forte (85%) + Voie libre + Zone ALPHA_3 (Hors LIMA) -> Mode Nominal (continue_mission)
+    10. Test 10 : Batterie normale (50%) + Voie libre + Zone CHARLIE_2 (Hors LIMA) -> Mode Nominal (continue_mission)
     """
-    scenarios = [
+    return [
         {
-            "name": "Règle 1 (Batterie Critique < 20% + Obstacle + Zone LIMA)",
+            "name": "01. Zone LIMA_1 | Batterie 12% | Obstacle 2m -> Règle 1 Prioritaire",
             "expected_decision": "return_to_base",
             "telemetry": {
                 "timestamp": "2026-10-06T12:00:00Z",
@@ -322,75 +327,114 @@ def get_all_test_scenarios() -> List[Dict[str, Any]]:
             }
         },
         {
-            "name": "Règle 1 (Batterie Critique < 20% sans obstacle hors LIMA)",
+            "name": "02. Zone ALPHA_1 | Batterie 15% | Voie libre -> Règle 1 Prioritaire",
             "expected_decision": "return_to_base",
             "telemetry": {
                 "timestamp": "2026-10-06T12:01:00Z",
                 "comm_link_c2": "LOST",
-                "battery_pct": 18,
-                "current_zone": "ALPHA_2",
+                "battery_pct": 15,
+                "current_zone": "ALPHA_1",
                 "sensor_front": "CLEAR",
                 "mission_status": "PATROL",
             }
         },
         {
-            "name": "Règle 2 (Obstacle en zone LIMA, Batterie >= 20%)",
-            "expected_decision": "bypass_obstacle",
+            "name": "03. Zone LIMA_2 | Batterie 5% | Voie libre -> Règle 1 Prioritaire",
+            "expected_decision": "return_to_base",
             "telemetry": {
                 "timestamp": "2026-10-06T12:02:00Z",
                 "comm_link_c2": "LOST",
-                "battery_pct": 45,
-                "current_zone": "LIMA_1",
-                "sensor_front": "OBSTACLE_DETECTED_3M",
-                "mission_status": "RECONNAISSANCE",
+                "battery_pct": 5,
+                "current_zone": "LIMA_2",
+                "sensor_front": "CLEAR",
+                "mission_status": "SURVEILLANCE",
             }
         },
         {
-            "name": "Règle 2 (Obstacle hors zone LIMA, Batterie >= 20%)",
+            "name": "04. Zone LIMA_1 | Batterie 35% | Obstacle 2m -> Règle 2 Prioritaire",
             "expected_decision": "bypass_obstacle",
             "telemetry": {
                 "timestamp": "2026-10-06T12:03:00Z",
                 "comm_link_c2": "LOST",
-                "battery_pct": 70,
-                "current_zone": "BRAVO_4",
-                "sensor_front": "OBSTACLE_DETECTED_1M",
+                "battery_pct": 35,
+                "current_zone": "LIMA_1",
+                "sensor_front": "OBSTACLE_DETECTED_2M",
                 "mission_status": "RECONNAISSANCE",
             }
         },
         {
-            "name": "Règle 3 (Interdiction Zone LIMA, Voie libre, Batterie >= 20%)",
-            "expected_decision": "hold_position",
+            "name": "05. Zone BRAVO_3 | Batterie 80% | Obstacle 1m -> Règle 2 Prioritaire",
+            "expected_decision": "bypass_obstacle",
             "telemetry": {
                 "timestamp": "2026-10-06T12:04:00Z",
                 "comm_link_c2": "LOST",
+                "battery_pct": 80,
+                "current_zone": "BRAVO_3",
+                "sensor_front": "OBSTACLE_DETECTED_1M",
+                "mission_status": "MAPPING",
+            }
+        },
+        {
+            "name": "06. Zone LIMA_3 | Batterie 40% | Obstacle 50cm -> Règle 2 Prioritaire",
+            "expected_decision": "bypass_obstacle",
+            "telemetry": {
+                "timestamp": "2026-10-06T12:05:00Z",
+                "comm_link_c2": "LOST",
+                "battery_pct": 40,
+                "current_zone": "LIMA_3",
+                "sensor_front": "OBSTACLE_CRITICAL_50CM",
+                "mission_status": "RECONNAISSANCE",
+            }
+        },
+        {
+            "name": "07. Zone LIMA_1 | Batterie 60% | Voie libre -> Règle 3 Prioritaire",
+            "expected_decision": "hold_position",
+            "telemetry": {
+                "timestamp": "2026-10-06T12:06:00Z",
+                "comm_link_c2": "LOST",
                 "battery_pct": 60,
+                "current_zone": "LIMA_1",
+                "sensor_front": "CLEAR",
+                "mission_status": "PATROL",
+            }
+        },
+        {
+            "name": "08. Zone LIMA_2 | Batterie 90% | Voie libre -> Règle 3 Prioritaire",
+            "expected_decision": "hold_position",
+            "telemetry": {
+                "timestamp": "2026-10-06T12:07:00Z",
+                "comm_link_c2": "LOST",
+                "battery_pct": 90,
                 "current_zone": "LIMA_2",
+                "sensor_front": "CLEAR",
+                "mission_status": "SURVEILLANCE",
+            }
+        },
+        {
+            "name": "09. Zone ALPHA_3 | Batterie 85% | Voie libre -> Mode Nominal",
+            "expected_decision": "continue_mission",
+            "telemetry": {
+                "timestamp": "2026-10-06T12:08:00Z",
+                "comm_link_c2": "LOST",
+                "battery_pct": 85,
+                "current_zone": "ALPHA_3",
                 "sensor_front": "CLEAR",
                 "mission_status": "RECONNAISSANCE",
             }
         },
         {
-            "name": "Mode Nominal (Voie libre, Hors LIMA, Batterie >= 20%)",
+            "name": "10. Zone CHARLIE_2 | Batterie 50% | Voie libre -> Mode Nominal",
             "expected_decision": "continue_mission",
             "telemetry": {
-                "timestamp": "2026-10-06T12:05:00Z",
+                "timestamp": "2026-10-06T12:09:00Z",
                 "comm_link_c2": "LOST",
-                "battery_pct": 85,
-                "current_zone": "CHARLIE_1",
+                "battery_pct": 50,
+                "current_zone": "CHARLIE_2",
                 "sensor_front": "CLEAR",
-                "mission_status": "RECONNAISSANCE",
+                "mission_status": "MAPPING",
             }
         },
     ]
-
-    # Fill up to 10 trials
-    extra = []
-    for i in range(7, 11):
-        s = scenarios[(i - 1) % len(scenarios)].copy()
-        s["name"] = f"Répétition Test {i:02d} ({s['name']})"
-        extra.append(s)
-
-    return scenarios + extra
 
 
 def run_benchmark_suite(
@@ -557,7 +601,7 @@ def main():
     parser.add_argument("--config", type=str, default="config.json", help="Chemin du fichier de configuration JSON")
     parser.add_argument("--platform", type=str, choices=["ollama", "lm_studio", "llama_cpp"], help="Plateforme LLM locale")
     parser.add_argument("--model", type=str, help="Nom du modèle local (ex: mistral:latest, qwen2.5:8b)")
-    parser.add_argument("--models", nargs="+", help="Liste de modèles à comparer dans le benchmark (ex: --models mistral:latest qwen2.5:8b failsafe_engine)")
+    parser.add_argument("--models", nargs="+", help="Liste de modèles à comparer dans le benchmark (ex: --models mistral:latest qwen3:14b qwen3:8b qwen3:4b qwen3:1.7b failsafe_engine)")
     parser.add_argument("--backend-url", type=str, help="URL personnalisée de l'API LLM")
     parser.add_argument("--telemetry-file", type=str, help="Fichier JSON de télémétrie")
     parser.add_argument("--battery", type=int, default=35, help="Pourcentage de batterie (0-100)")

@@ -3,8 +3,10 @@
   "model": "mistral:latest",
   "models": [
     "mistral:latest",
-    "qwen2.5:8b",
-    "llama3.2:3b",
+    "qwen3:14b",
+    "qwen3:8b",
+    "qwen3:4b",
+    "qwen3:1.7b",
     "failsafe_engine"
   ],
   "platforms_config": {
