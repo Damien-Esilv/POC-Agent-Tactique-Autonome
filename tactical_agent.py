@@ -68,14 +68,16 @@ class TacticalAgent:
         platform: Optional[str] = None,
         backend_url: Optional[str] = None,
         model_name: Optional[str] = None,
-        timeout_sec: Optional[float] = None,
+        timeout_sec: Optional[float] = None,  # None par défaut = temps réel
     ):
         self.config = self._load_config(config_path or DEFAULT_CONFIG_PATH)
 
         self.platform = platform or self.config.get("platform", "ollama")
         self.model_name = model_name or self.config.get("model", "mistral:latest")
         self.models_list = self.config.get("models", [self.model_name])
-        self.timeout_sec = timeout_sec or self.config.get("timeout_sec", 3.0)
+        
+        # Timeout activé uniquement si timeout_sec est passé explicitement en paramètre
+        self.timeout_sec = timeout_sec
         self.fallback_enabled = self.config.get("fallback_to_failsafe", True)
 
         platforms_cfg = self.config.get("platforms_config", {})
@@ -85,6 +87,7 @@ class TacticalAgent:
             self.backend_url = backend_url
         else:
             self.backend_url = selected_platform_cfg.get("url", "http://localhost:11434")
+
 
     def _load_config(self, path: Path) -> Dict[str, Any]:
         """Loads configuration file if present, else returns sensible defaults."""
@@ -216,7 +219,7 @@ class TacticalAgent:
         user_content = json.dumps(telemetry.model_dump(), indent=2)
         start_time = time.perf_counter()
 
-        # Platform: Ollama API (/api/chat)
+        # 1. Tentative sur l'endpoint Ollama (/api/chat)
         if self.platform == "ollama" or "/api" in self.backend_url or "11434" in self.backend_url:
             chat_url = f"{self.backend_url.rstrip('/')}/api/chat"
             payload = {
@@ -236,10 +239,16 @@ class TacticalAgent:
                     cleaned = self._clean_json_string(raw_content)
                     decision = TacticalDecision.model_validate_json(cleaned)
                     return decision, elapsed, f"LLM Ollama ({target_model})"
-            except Exception:
-                pass
+                else:
+                    print(f"{COLOR_RED}[WARN Ollama] HTTP {resp.status_code}: {resp.text[:100]}{COLOR_RESET}", file=sys.stderr)
+            except requests.exceptions.ConnectionError:
+                print(f"{COLOR_RED}[ERROR Ollama] Impossible de se connecter à {chat_url}. Le serveur Ollama est-il démarré ?{COLOR_RESET}", file=sys.stderr)
+            except requests.exceptions.Timeout:
+                print(f"{COLOR_RED}[ERROR Ollama] Timeout de {self.timeout_sec}s dépassé pour le modèle {target_model}.{COLOR_RESET}", file=sys.stderr)
+            except Exception as e:
+                print(f"{COLOR_RED}[ERROR Ollama] Erreur inattendue : {e}{COLOR_RESET}", file=sys.stderr)
 
-        # Platform: LM Studio / llama.cpp / OpenAI-compatible (/v1/chat/completions)
+        # 2. Tentative de secours sur l'endpoint OpenAI-compatible (/v1/chat/completions - LM Studio / llama.cpp)
         v1_url = f"{self.backend_url.rstrip('/')}/v1/chat/completions"
         payload = {
             "model": target_model,
@@ -258,11 +267,18 @@ class TacticalAgent:
                 cleaned = self._clean_json_string(raw_content)
                 decision = TacticalDecision.model_validate_json(cleaned)
                 return decision, elapsed, f"LLM {self.platform.upper()} ({target_model})"
-        except Exception:
-            pass
+            else:
+                print(f"{COLOR_RED}[WARN {self.platform.upper()}] HTTP {resp.status_code}: {resp.text[:100]}{COLOR_RESET}", file=sys.stderr)
+        except requests.exceptions.ConnectionError:
+            print(f"{COLOR_RED}[ERROR {self.platform.upper()}] Impossible de se connecter à {v1_url}.{COLOR_RESET}", file=sys.stderr)
+        except requests.exceptions.Timeout:
+            print(f"{COLOR_RED}[ERROR {self.platform.upper()}] Timeout dépassé pour {target_model}.{COLOR_RESET}", file=sys.stderr)
+        except Exception as e:
+            print(f"{COLOR_RED}[ERROR {self.platform.upper()}] Erreur : {e}{COLOR_RESET}", file=sys.stderr)
 
         return None, time.perf_counter() - start_time, f"LLM Non Disponible ({target_model})"
 
+    
     def process(self, telemetry_data: Dict[str, Any], force_failsafe: bool = False, override_model: Optional[str] = None) -> Dict[str, Any]:
         """
         Main decision-making entrypoint.
@@ -475,6 +491,23 @@ def run_benchmark_suite(
         print(f" 🤖 ÉVALUATION DU MODÈLE [{m_idx}/{len(models)}] : {COLOR_BOLD}{model_item}{COLOR_RESET}")
         print("─" * 86)
 
+        # WARMUP CHRONOMÉTRÉ : Préchargement du modèle en VRAM
+        warmup_time = 0.0
+        if model_item not in ["failsafe_engine", "rules_engine"]:
+            print(f"  [Warmup] Préchargement du modèle {model_item} en mémoire VRAM...", end="", flush=True)
+            t_warmup_start = time.perf_counter()
+            try:
+                dummy_telemetry = test_scenarios[0]["telemetry"]
+                _ = agent.process(dummy_telemetry, force_failsafe=False, override_model=model_item)
+            except Exception:
+                pass
+            warmup_time = time.perf_counter() - t_warmup_start
+            print(f" prêt en {COLOR_BOLD}{warmup_time:.4f} s{COLOR_RESET} ! Début des mesures.\n")
+
+        valid_json_count = 0
+        correct_decision_count = 0
+        latencies = []
+
         valid_json_count = 0
         correct_decision_count = 0
         latencies = []
@@ -546,10 +579,14 @@ def run_benchmark_suite(
 
         model_size = agent.get_model_size_str(model_item)
 
+        # Calcul / formatage du temps de warmup pour le dictionnaire
+        warmup_str = f"{warmup_time:.4f} s" if model_item not in ["failsafe_engine", "rules_engine"] else "N/A"
+
         model_summary_results.append({
             "model": model_item,
             "platform": agent.platform if model_item != "failsafe_engine" else "Local Python Engine",
             "size": model_size,
+            "warmup_time_str": warmup_str,  # <-- AJOUTER CETTE LIGNE
             "json_score": f"{valid_json_count}/{total_scenarios} ({valid_json_count/total_scenarios*100:.0f} %)",
             "json_passed": kpi1_passed,
             "avg_latency_str": f"{avg_lat:.4f} s",
@@ -565,18 +602,39 @@ def run_benchmark_suite(
             res_icon = f"{COLOR_GREEN}✅ SUCCÈS{COLOR_RESET}" if total_kpi_passed else f"{COLOR_RED}❌ ÉCHEC{COLOR_RESET}"
             print(f"  Résultat rapide : JSON {valid_json_count}/{total_scenarios} | Latence moy: {avg_lat:.4f}s | Véracité: {correct_decision_count}/{total_scenarios} -> Statut : {res_icon}")
 
-    # Display Final Comparative Table
-    print("\n" + "=" * 86)
-    print("                    TABLEAU COMPARATIF DES PERFORMANCE MODÈLES")
-    print("=" * 86)
+        if model_item not in ["failsafe_engine", "rules_engine"] and agent.platform == "ollama":
+            print(f"  [Purge VRAM] Libération de la mémoire pour {model_item}...", end="", flush=True)
+            try:
+                import requests
+                unload_url = f"{agent.backend_url.rstrip('/')}/api/generate"
+                
+                # Envoi de keep_alive: 0 pour ordonner à Ollama de décharger le modèle
+                resp = requests.post(
+                    unload_url, 
+                    json={"model": model_item, "keep_alive": 0}, 
+                    timeout=3.0
+                )
+                
+                if resp.status_code == 200:
+                    print(f" {COLOR_GREEN}déchargé de la VRAM avec succès.{COLOR_RESET}\n")
+                else:
+                    print(f" {COLOR_RED}échec HTTP {resp.status_code}.{COLOR_RESET}\n")
+            except Exception as e:
+                print(f" {COLOR_RED}erreur : {e}{COLOR_RESET}\n")
 
-    # Markdown Table Header
-    print(f"| {'Modèle':<18} | {'Taille':<9} | {'Structure JSON':<15} | {'Latence Moy.':<13} | {'Latence Min-Max':<18} | {'Véracité':<15} | {'KPI Total':<10} |")
-    print("|" + "-" * 20 + "|" + "-" * 11 + "|" + "-" * 17 + "|" + "-" * 15 + "|" + "-" * 20 + "|" + "-" * 17 + "|" + "-" * 12 + "|")
+    # Display Final Comparative Table
+    print("\n" + "=" * 102)
+    print("                              TABLEAU COMPARATIF DES PERFORMANCES MODÈLES")
+    print("=" * 102)
+
+    # Markdown Table Header incluant Warmup
+    print(f"| {'Modèle':<18} | {'Taille':<9} | {'Warmup':<12} | {'Structure JSON':<15} | {'Latence Moy.':<13} | {'Latence Min-Max':<18} | {'Véracité':<15} | {'KPI Total':<10} |")
+    print("|" + "-" * 20 + "|" + "-" * 11 + "|" + "-" * 14 + "|" + "-" * 17 + "|" + "-" * 15 + "|" + "-" * 20 + "|" + "-" * 17 + "|" + "-" * 12 + "|")
 
     for res in model_summary_results:
         m_name = res["model"][:18]
         m_size = res["size"][:9]
+        warmup_str = res["warmup_time_str"][:12]
 
         json_str = res["json_score"]
         json_fmt = f"{COLOR_GREEN}{json_str:<15}{COLOR_RESET}" if res["json_passed"] else f"{COLOR_RED}{json_str:<15}{COLOR_RESET}"
@@ -591,9 +649,9 @@ def run_benchmark_suite(
 
         total_fmt = f"{COLOR_GREEN}{COLOR_BOLD}SUCCÈS{COLOR_RESET}    " if res["total_kpi_passed"] else f"{COLOR_RED}{COLOR_BOLD}ÉCHEC{COLOR_RESET}     "
 
-        print(f"| {m_name:<18} | {m_size:<9} | {json_fmt} | {lat_fmt} | {min_max_str:<18} | {ver_fmt} | {total_fmt} |")
+        print(f"| {m_name:<18} | {m_size:<9} | {warmup_str:<12} | {json_fmt} | {lat_fmt} | {min_max_str:<18} | {ver_fmt} | {total_fmt} |")
 
-    print("=" * 86)
+    print("=" * 102 + "\n")
 
 
 def main():
@@ -612,15 +670,35 @@ def main():
     parser.add_argument("--condensed", action="store_true", help="Afficher un résumé condensé du benchmark")
     parser.add_argument("--verbose", action="store_true", help="Forcer l'affichage détaillé de chaque test même en multi-modèles")
     parser.add_argument("--force-failsafe", action="store_true", help="Forcer le moteur de règles déterministe hors-ligne")
+    parser.add_argument(
+        "--timeout",
+        nargs="?",
+        const=-1.0,
+        type=float,
+        default=None,
+        help="Active le timeout en secondes. Si passé sans valeur, utilise la valeur de config.json (ex: 3.0). Par défaut : désactivé (None).",
+    )
 
     args = parser.parse_args()
 
     config_path = Path(args.config)
+
+    # Résolution du timeout_sec : None par défaut, sauf si --timeout est passé dans la CLI
+    timeout_sec = None
+    if args.timeout is not None:
+        if args.timeout == -1.0:
+            # Charge la configuration pour récupérer 'timeout_sec' du JSON (ex: 3.0)
+            temp_agent = TacticalAgent(config_path=config_path)
+            timeout_sec = temp_agent.config.get("timeout_sec", 3.0)
+        else:
+            timeout_sec = args.timeout
+
     agent = TacticalAgent(
         config_path=config_path,
         platform=args.platform,
         backend_url=args.backend_url,
         model_name=args.model,
+        timeout_sec=timeout_sec,
     )
 
     if args.models:
