@@ -1,18 +1,21 @@
 {
   "platform": "ollama",
   "model": "mistral:latest",
+  "models": [
+    "mistral:latest",
+    "qwen2.5:8b",
+    "llama3.2:3b",
+    "failsafe_engine"
+  ],
   "platforms_config": {
     "ollama": {
-      "url": "http://localhost:11434",
-      "chat_endpoint": "/api/chat"
+      "url": "http://localhost:11434"
     },
     "lm_studio": {
-      "url": "http://localhost:1234",
-      "chat_endpoint": "/v1/chat/completions"
+      "url": "http://localhost:1234"
     },
     "llama_cpp": {
-      "url": "http://localhost:8080",
-      "chat_endpoint": "/v1/chat/completions"
+      "url": "http://localhost:8080"
     }
   },
   "timeout_sec": 3.0,

@@ -2,10 +2,3 @@ __pycache__/
 *.pyc
 .pytest_cache/
 *.tgz
-
-# Python virtual environments
-.venv/
-.venv-*/
-venv/
-env/
-ENV/
